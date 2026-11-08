@@ -352,6 +352,54 @@ static void send_mods(void)
                                    mod_locked(), (uint32_t)layout_group);
 }
 
+/* next keyboard layout: Super+Space, or "layout-next" on the control fifo */
+static void layout_next(void)
+{
+    keymap_init();
+    layout_group = (layout_group + 1) % n_layouts;
+    /* keep our xkb state's layout in step with what we publish */
+    xkb_set_group((xkb_layout_index_t)layout_group);
+    layout_publish();
+    send_mods(); /* focused client switches layout now */
+}
+
+/* control fifo $XDG_RUNTIME_DIR/railwl/ctl: one command per line, written by
+   our own utilities (railbar asks for the next layout when its indicator is
+   clicked). the directory is 0700, so only this user can write to it. */
+static int ctl_fd = -1, ctl_keep = -1;
+static char ctl_buf[128];
+static size_t ctl_len;
+
+static int ctl_cb(int fd, uint32_t mask, void *data)
+{
+    (void)mask; (void)data;
+    char tmp[64];
+    ssize_t n;
+    while((n = read(fd, tmp, sizeof tmp)) > 0){
+        for(ssize_t i = 0; i < n; i++){
+            if(tmp[i] == '\n'){
+                ctl_buf[ctl_len] = 0; ctl_len = 0;
+                if(!strcmp(ctl_buf, "layout-next")) layout_next();
+            } else if(ctl_len < sizeof ctl_buf - 1) ctl_buf[ctl_len++] = tmp[i];
+        }
+    }
+    return 0;
+}
+
+static void ctl_init(struct rail *r)
+{
+    const char *rt = getenv("XDG_RUNTIME_DIR");
+    char path[300];
+    snprintf(path, sizeof path, "%s/railwl/ctl", rt ? rt : "/tmp");
+    unlink(path);                               /* stale fifo from a crashed run */
+    if(mkfifo(path, 0600) < 0) return;
+    ctl_fd = open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+    if(ctl_fd < 0) return;
+    /* hold a write end open so the read end never sees EOF between writers */
+    ctl_keep = open(path, O_WRONLY | O_NONBLOCK | O_CLOEXEC);
+    wl_event_loop_add_fd(r->loop, ctl_fd, WL_EVENT_READABLE, ctl_cb, NULL);
+}
+
 struct rail_sel rail_sel;
 
 static void sel_end(struct rail *r, bool take)
@@ -443,15 +491,7 @@ static void input_key(struct rail *r, struct input_event *e)
         if(code == KEY_ENTER){ rail_spawn("term"); return; }
         if(code == KEY_Q){ rail_close_focused(r); return; }
         if(code == KEY_D){ rail_spawn_util("raillauncher"); return; }
-        if(code == KEY_SPACE){
-            keymap_init();
-            layout_group = (layout_group + 1) % n_layouts;
-            /* keep our xkb state's layout in step with what we publish */
-            xkb_set_group((xkb_layout_index_t)layout_group);
-            layout_publish();
-            send_mods(); /* focused client switches layout now */
-            return;
-        }
+        if(code == KEY_SPACE){ layout_next(); return; }
     }
     if(!down && meta_down && (code == KEY_SPACE || code == KEY_D || code == KEY_S)) return; /* swallow its release */
 
@@ -528,7 +568,7 @@ static void input_rel(struct rail *r, struct input_event *e)
     }
     /* pointer focus tracks whatever is under the cursor: popup or tile */
     { struct rail_surface *hv = rail_pick_surface(r, o->px, o->py);
-      if(hv && !hv->is_bar) ptr_focus(hv); }
+      if(hv) ptr_focus(hv); }   /* the bar gets pointer focus too, or hover/click/wheel never reach railbar */
     if(pointer_surface)
     FOR_PTR(surf_client(pointer_surface), p)
     { /* tile content is inset by the frame, shifted by the client's geometry origin */
@@ -679,6 +719,7 @@ static int input_fd_cb(int fd, uint32_t mask, void *data)
 int rail_input_init(struct rail *r)
 {
     keymap_init(); /* also writes the layout state file before any client starts */
+    ctl_init(r);
     DIR *d = opendir("/dev/input");
     if(!d){ perror("opendir /dev/input"); return -1; }
     struct dirent *e;

@@ -93,21 +93,31 @@ static const struct xdg_surface_listener xdg_surface_listener = { .configure = x
 
 /* ---------- pointer/keyboard ---------- */
 static void ptr_enter(void *d, struct wl_pointer *p, uint32_t s, struct wl_surface *sf, wl_fixed_t x, wl_fixed_t y)
-{ (void)d;(void)p;(void)s;(void)sf;(void)x;(void)y; }
+{
+    (void)p;(void)s;(void)sf;
+    struct rc_client *c = d;
+    c->ptr_x = wl_fixed_to_double(x); c->ptr_y = wl_fixed_to_double(y);
+    if(c->on_ptr_motion) c->on_ptr_motion(c, c->ptr_x, c->ptr_y);
+}
 static void ptr_leave(void *d, struct wl_pointer *p, uint32_t s, struct wl_surface *sf)
-{ (void)d;(void)p;(void)s;(void)sf; }
+{
+    (void)p;(void)s;(void)sf;
+    struct rc_client *c = d;
+    if(c->on_ptr_leave) c->on_ptr_leave(c);
+}
 static void ptr_motion(void *d, struct wl_pointer *p, uint32_t t, wl_fixed_t x, wl_fixed_t y)
 {
     (void)p;(void)t;
     struct rc_client *c = d;
-    if(c->on_ptr_motion) c->on_ptr_motion(c, wl_fixed_to_double(x), wl_fixed_to_double(y));
+    c->ptr_x = wl_fixed_to_double(x); c->ptr_y = wl_fixed_to_double(y);
+    if(c->on_ptr_motion) c->on_ptr_motion(c, c->ptr_x, c->ptr_y);
 }
 static void ptr_button(void *d, struct wl_pointer *p, uint32_t s, uint32_t t, uint32_t b, uint32_t st)
 {
     (void)p;(void)s;(void)t;
     struct rc_client *c = d;
     if(c->on_ptr_button) c->on_ptr_button(c, b, st == WL_POINTER_BUTTON_STATE_PRESSED,
-                                          c->window ? c->window->w/2.0 : 0, 0);
+                                          c->ptr_x, c->ptr_y);
 }
 static void ptr_axis(void *d, struct wl_pointer *p, uint32_t t, uint32_t a, wl_fixed_t v)
 {

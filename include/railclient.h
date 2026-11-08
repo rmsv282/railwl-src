@@ -25,6 +25,8 @@ struct rc_client {
     void (*on_ptr_motion)(struct rc_client *c, double x, double y);
     void (*on_ptr_button)(struct rc_client *c, uint32_t button, bool pressed, double x, double y);
     void (*on_ptr_axis)(struct rc_client *c, double dx, double dy);
+    void (*on_ptr_leave)(struct rc_client *c);
+    double ptr_x, ptr_y;                   /* last known pointer position in the window */
     void (*on_redraw)(struct rc_client *c);
     int watch_fd;                          /* optional extra fd to poll (-1/0 = none) */
     void (*on_watch)(struct rc_client *c); /* called when watch_fd is readable */
